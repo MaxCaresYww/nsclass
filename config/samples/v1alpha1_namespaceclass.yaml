@@ -1,0 +1,9 @@
+apiVersion: akuity.io/v1alpha1
+kind: NamespaceClass
+metadata:
+  labels:
+    app.kubernetes.io/name: nsclass
+    app.kubernetes.io/managed-by: kustomize
+  name: namespaceclass-sample
+spec:
+  # TODO(user): Add fields here

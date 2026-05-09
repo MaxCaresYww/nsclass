@@ -1,8 +1,11 @@
-# nsclass
-// TODO(user): Add simple overview of use/purpose
+# NamespaceClass Operator
+
+A Kubebuilder-based Kubernetes operator for NamespaceClass resources.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+NamespaceClass operator provides a cluster-scoped NamespaceClass API intended for
+cluster administrators to define reusable namespace configuration classes.
 
 ## Getting Started
 
@@ -111,7 +114,12 @@ previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml
 is manually re-applied afterwards.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+
+- Discuss via Github issues with maintainer for new requirements and issues.
+- Use Github pull requests to push code for review. 
+- Commit log follows [How to Write a Git Commit Message](https://chris.beams.io/git-commit) in general.
+- Coding style follows [Effective Go](https://go.dev/doc/effective_go) and [Google Go style](https://google.github.io/styleguide/go/)
+- Project layout follows https://github.com/golang-standards/project-layout
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 
@@ -119,7 +127,7 @@ More information can be found via the [Kubebuilder Documentation](https://book.k
 
 ## License
 
-Copyright 2026 Xu Rongjie.
+Copyright 2026 Akuity.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

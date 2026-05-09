@@ -8,4 +8,12 @@ layout:
 - go.kubebuilder.io/v4
 projectName: nsclass
 repo: github.com/maxcaresyww/nsclass
+resources:
+- api:
+    crdVersion: v1
+  controller: true
+  domain: akuity.io
+  kind: NamespaceClass
+  path: github.com/maxcaresyww/nsclass/api/v1alpha1
+  version: v1alpha1
 version: "3"
