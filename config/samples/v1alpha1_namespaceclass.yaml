@@ -4,6 +4,12 @@ metadata:
   labels:
     app.kubernetes.io/name: nsclass
     app.kubernetes.io/managed-by: kustomize
-  name: namespaceclass-sample
+  name: public-network
 spec:
-  # TODO(user): Add fields here
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: namespaceclass-sample
+    data:
+      example: managed-by-namespaceclass

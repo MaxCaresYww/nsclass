@@ -18,6 +18,12 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+const (
+	// NamespaceClassReadyCondition indicates whether every resource template is valid.
+	NamespaceClassReadyCondition = "Ready"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -25,33 +31,19 @@ import (
 
 // NamespaceClassSpec defines the desired state of NamespaceClass
 type NamespaceClassSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of NamespaceClass. Edit namespaceclass_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// resources contains raw Kubernetes manifest templates to reconcile into matching namespaces.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Resources []runtime.RawExtension `json:"resources"`
 }
 
 // NamespaceClassStatus defines the observed state of NamespaceClass.
 type NamespaceClassStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// observedGeneration is the most recent generation observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// conditions represent the current state of the NamespaceClass resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -60,7 +52,10 @@ type NamespaceClassStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:resource:scope=Cluster,shortName=nsclass;nscls
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="Generation",type=integer,JSONPath=".metadata.generation",priority=1
+// +kubebuilder:printcolumn:name="Observed Generation",type=integer,JSONPath=".status.observedGeneration",priority=1
 
 // NamespaceClass is the Schema for the namespaceclasses API
 type NamespaceClass struct {
