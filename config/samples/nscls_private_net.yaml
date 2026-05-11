@@ -4,12 +4,12 @@ metadata:
   labels:
     app.kubernetes.io/name: nsclass
     app.kubernetes.io/managed-by: kustomize
-  name: public-network
+  name: private-network
 spec:
   resources:
   - apiVersion: v1
     kind: ConfigMap
     metadata:
-      name: namespaceclass-sample
+      name: private-net
     data:
-      example: managed-by-namespaceclass
+      example: private_net

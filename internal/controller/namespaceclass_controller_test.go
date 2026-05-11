@@ -97,19 +97,13 @@ func createNamespaceClass(ctx context.Context, name string, resources ...runtime
 }
 
 func reconcileNamespaceClass(ctx context.Context, name string) *akuityiov1alpha1.NamespaceClass {
-	httpClient, err := rest.HTTPClientFor(cfg)
-	Expect(err).NotTo(HaveOccurred())
-
-	restMapper, err := apiutil.NewDynamicRESTMapper(cfg, httpClient)
-	Expect(err).NotTo(HaveOccurred())
-
 	controllerReconciler := &NamespaceClassReconciler{
 		Client:     k8sClient,
 		Scheme:     k8sClient.Scheme(),
-		RESTMapper: restMapper,
+		RESTMapper: newTestRESTMapper(),
 	}
 
-	_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+	_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name},
 	})
 	Expect(err).NotTo(HaveOccurred())
@@ -117,4 +111,13 @@ func reconcileNamespaceClass(ctx context.Context, name string) *akuityiov1alpha1
 	namespaceClass := &akuityiov1alpha1.NamespaceClass{}
 	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, namespaceClass)).To(Succeed())
 	return namespaceClass
+}
+
+func newTestRESTMapper() apimeta.RESTMapper {
+	httpClient, err := rest.HTTPClientFor(cfg)
+	Expect(err).NotTo(HaveOccurred())
+
+	restMapper, err := apiutil.NewDynamicRESTMapper(cfg, httpClient)
+	Expect(err).NotTo(HaveOccurred())
+	return restMapper
 }
