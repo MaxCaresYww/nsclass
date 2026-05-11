@@ -1,0 +1,15 @@
+apiVersion: akuity.io/v1alpha1
+kind: NamespaceClass
+metadata:
+  labels:
+    app.kubernetes.io/name: nsclass
+    app.kubernetes.io/managed-by: kustomize
+  name: public-network
+spec:
+  resources:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: public-net
+    data:
+      example: public_net
