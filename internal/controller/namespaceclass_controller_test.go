@@ -96,7 +96,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 		Expect(ready.Message).To(ContainSubstring("cluster-scoped"))
 	})
 
-	It("blocks deletion while namespaces still reference the class", func() {
+	It("blocks deletion while namespaces still reference the class through the annotation", func() {
 		namespaceClass := createNamespaceClass(ctx, "delete-blocked-class", configMapTemplate("delete-blocked-config", "state", "managed"))
 		reconcileNamespaceClass(ctx, namespaceClass.Name)
 		namespace := createNamespace(ctx, "nsclass-delete-blocked", namespaceClass.Name)
@@ -117,8 +117,39 @@ var _ = Describe("NamespaceClass Controller", func() {
 		Expect(ready.Reason).To(Equal("NamespacesStillUseClass"))
 		Expect(ready.Message).To(Equal("Namespaces still reference this NamespaceClass: nsclass-delete-blocked, nsclass-delete-blocked-alt"))
 
-		updateNamespaceClassLabel(ctx, namespace.Name, "")
-		updateNamespaceClassLabel(ctx, otherNamespace.Name, "")
+		updateNamespaceClassAnnotation(ctx, namespace.Name, "")
+		updateNamespaceClassAnnotation(ctx, otherNamespace.Name, "")
+
+		result = reconcileNamespaceClassResult(ctx, namespaceClass.Name)
+
+		Expect(result).To(Equal(reconcile.Result{}))
+		Eventually(func() bool {
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, &akuityiov1alpha1.NamespaceClass{})
+			return apierrors.IsNotFound(err)
+		}).Should(BeTrue())
+	})
+
+	It("blocks deletion while namespaces still reference the class through the annotation", func() {
+		namespaceClass := createNamespaceClass(ctx, "delete-blocked-annotation-class", configMapTemplate("delete-blocked-annotation-config", "state", "managed"))
+		reconcileNamespaceClass(ctx, namespaceClass.Name)
+		createNamespaceWithClassAnnotation(ctx, "nsclass-delete-blocked-annotation", namespaceClass.Name+",other-class")
+
+		reconciled := &akuityiov1alpha1.NamespaceClass{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, reconciled)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, reconciled)).To(Succeed())
+
+		result := reconcileNamespaceClassResult(ctx, namespaceClass.Name)
+
+		Expect(result.RequeueAfter).To(Equal(deletionBlockedRequeue))
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, reconciled)).To(Succeed())
+		Expect(reconciled.Finalizers).To(ContainElement(namespaceClassFinalizer))
+		ready := apimeta.FindStatusCondition(reconciled.Status.Conditions, akuityiov1alpha1.NamespaceClassReadyCondition)
+		Expect(ready).NotTo(BeNil())
+		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+		Expect(ready.Reason).To(Equal("NamespacesStillUseClass"))
+		Expect(ready.Message).To(Equal("Namespaces still reference this NamespaceClass: nsclass-delete-blocked-annotation"))
+
+		updateNamespaceClassAnnotation(ctx, "nsclass-delete-blocked-annotation", "other-class")
 
 		result = reconcileNamespaceClassResult(ctx, namespaceClass.Name)
 

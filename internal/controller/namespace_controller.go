@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -41,7 +42,7 @@ import (
 )
 
 const (
-	namespaceClassNamesLabel = "namespaceclass.akuity.io/name"
+	namespaceClassNamesAnnotation = "namespaceclass.akuity.io/names"
 
 	managedLabel   = "namespaceclass.akuity.io/managed"
 	classLabel     = "namespaceclass.akuity.io/class"
@@ -54,7 +55,7 @@ const (
 	managedResourceSyncPeriod = 5 * time.Minute
 )
 
-// NamespaceReconciler reconciles resources derived from NamespaceClass membership labels.
+// NamespaceReconciler reconciles resources derived from NamespaceClass membership annotations.
 type NamespaceReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
@@ -92,7 +93,7 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	classNames, err := parseNamespaceClassNames(namespace.Labels[namespaceClassNamesLabel])
+	classNames, err := namespaceClassNamesForNamespace(namespace)
 	if err != nil {
 		r.recordWarning(namespace, "InvalidNamespaceClassMembership", err.Error())
 		return ctrl.Result{}, nil
@@ -142,15 +143,37 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{RequeueAfter: managedResourceSyncPeriod}, nil
 }
 
-func parseNamespaceClassNames(value string) ([]string, error) {
-	name := strings.TrimSpace(value)
-	if name == "" {
+func namespaceClassNamesForNamespace(namespace *corev1.Namespace) ([]string, error) {
+	if value, ok := namespace.GetAnnotations()[namespaceClassNamesAnnotation]; ok {
+		return parseNamespaceClassNamesAnnotation(value)
+	}
+	return nil, nil
+}
+
+func parseNamespaceClassNamesAnnotation(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return nil, nil
 	}
-	if strings.ContainsAny(name, ",; ") {
-		return nil, fmt.Errorf("%s must reference exactly one NamespaceClass", namespaceClassNamesLabel)
+
+	parts := strings.Split(value, ",")
+	names := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			return nil, fmt.Errorf("%s must not contain empty NamespaceClass names", namespaceClassNamesAnnotation)
+		}
+		if errs := validation.IsDNS1123Subdomain(name); len(errs) > 0 {
+			return nil, fmt.Errorf("%s contains invalid NamespaceClass name %q: %s", namespaceClassNamesAnnotation, name, strings.Join(errs, "; "))
+		}
+		if _, ok := seen[name]; ok {
+			return nil, fmt.Errorf("%s must not contain duplicate NamespaceClass %q", namespaceClassNamesAnnotation, name)
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
 	}
-	return []string{name}, nil
+	return names, nil
 }
 
 func (r *NamespaceReconciler) listManagedObjectsForNamespace(ctx context.Context, namespaceName string) ([]unstructured.Unstructured, error) {
@@ -481,7 +504,7 @@ func (r *NamespaceReconciler) mapNamespaceClassToNamespaces(ctx context.Context,
 
 	requests := make([]reconcile.Request, 0)
 	for _, namespace := range namespaceList.Items {
-		classNames, err := parseNamespaceClassNames(namespace.Labels[namespaceClassNamesLabel])
+		classNames, err := namespaceClassNamesForNamespace(&namespace)
 		if err != nil {
 			continue
 		}

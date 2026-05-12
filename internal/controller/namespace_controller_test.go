@@ -55,10 +55,69 @@ var _ = Describe("Namespace Controller", func() {
 		Expect(configMap.Annotations).To(HaveKeyWithValue(templateIDAnnotation, "v1/ConfigMap/namespaceclass-sample"))
 	})
 
-	It("rejects multiple namespace class memberships", func() {
-		classNames, err := parseNamespaceClassNames("first-class,second-class")
+	It("applies resources from Ready NamespaceClasses listed in the annotation", func() {
+		namespace := createNamespaceWithClassAnnotation(ctx, "nsclass-apply-many", "annotation-public-network, annotation-registry-push")
+		publicNetwork := createNamespaceClass(ctx, "annotation-public-network", configMapTemplate("public-config", "class", "public"))
+		registryPush := createNamespaceClass(ctx, "annotation-registry-push", configMapTemplate("registry-config", "class", "registry"))
+		reconcileNamespaceClass(ctx, publicNetwork.Name)
+		reconcileNamespaceClass(ctx, registryPush.Name)
 
-		Expect(err).To(MatchError(ContainSubstring("exactly one NamespaceClass")))
+		result := reconcileNamespaceController(ctx, namespace.Name, nil)
+
+		Expect(result).To(Equal(reconcile.Result{RequeueAfter: managedResourceSyncPeriod}))
+		publicConfig := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace.Name, Name: "public-config"}, publicConfig)).To(Succeed())
+		Expect(publicConfig.Data).To(HaveKeyWithValue("class", "public"))
+		Expect(publicConfig.Labels).To(HaveKeyWithValue(classLabel, publicNetwork.Name))
+		registryConfig := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace.Name, Name: "registry-config"}, registryConfig)).To(Succeed())
+		Expect(registryConfig.Data).To(HaveKeyWithValue("class", "registry"))
+		Expect(registryConfig.Labels).To(HaveKeyWithValue(classLabel, registryPush.Name))
+	})
+
+	It("ignores the legacy namespace class label", func() {
+		namespace := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "nsclass-legacy-label-ignored",
+				Labels: map[string]string{
+					"namespaceclass.akuity.io/name": "legacy-class",
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, namespace)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, namespace))).To(Succeed())
+		})
+		legacyClass := createNamespaceClass(ctx, "legacy-class", configMapTemplate("legacy-config", "class", "legacy"))
+		reconcileNamespaceClass(ctx, legacyClass.Name)
+
+		result := reconcileNamespaceController(ctx, namespace.Name, nil)
+
+		Expect(result).To(Equal(reconcile.Result{}))
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace.Name, Name: "legacy-config"}, &corev1.ConfigMap{})).To(MatchError(errors.IsNotFound, "IsNotFound"))
+	})
+
+	It("parses comma-separated namespace class memberships from the annotation", func() {
+		classNames, err := parseNamespaceClassNamesAnnotation("first-class, second-class")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(classNames).To(Equal([]string{"first-class", "second-class"}))
+	})
+
+	It("rejects empty and duplicate namespace class memberships in the annotation", func() {
+		classNames, err := parseNamespaceClassNamesAnnotation("first-class,,second-class")
+
+		Expect(err).To(MatchError(ContainSubstring("empty NamespaceClass names")))
+		Expect(classNames).To(BeNil())
+
+		classNames, err = parseNamespaceClassNamesAnnotation("first-class,second-class,first-class")
+
+		Expect(err).To(MatchError(ContainSubstring("duplicate NamespaceClass")))
+		Expect(classNames).To(BeNil())
+
+		classNames, err = parseNamespaceClassNamesAnnotation("first-class second-class")
+
+		Expect(err).To(MatchError(ContainSubstring("invalid NamespaceClass name")))
 		Expect(classNames).To(BeNil())
 	})
 
@@ -71,7 +130,7 @@ var _ = Describe("Namespace Controller", func() {
 
 		reconcileNamespace(ctx, namespace.Name, nil)
 
-		updateNamespaceClassLabel(ctx, namespace.Name, "second-class")
+		updateNamespaceClassAnnotation(ctx, namespace.Name, "second-class")
 		reconcileNamespace(ctx, namespace.Name, nil)
 
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace.Name, Name: "first-config"}, &corev1.ConfigMap{})).To(MatchError(errors.IsNotFound, "IsNotFound"))
@@ -80,13 +139,31 @@ var _ = Describe("Namespace Controller", func() {
 		Expect(secondConfig.Data).To(HaveKeyWithValue("class", "second"))
 	})
 
+	It("deletes resources from classes removed from annotation membership", func() {
+		namespace := createNamespaceWithClassAnnotation(ctx, "nsclass-annotation-membership", "annotation-first-class,annotation-second-class")
+		firstClass := createNamespaceClass(ctx, "annotation-first-class", configMapTemplate("first-config-annotation", "class", "first"))
+		secondClass := createNamespaceClass(ctx, "annotation-second-class", configMapTemplate("second-config-annotation", "class", "second"))
+		reconcileNamespaceClass(ctx, firstClass.Name)
+		reconcileNamespaceClass(ctx, secondClass.Name)
+
+		reconcileNamespace(ctx, namespace.Name, nil)
+
+		updateNamespaceClassAnnotation(ctx, namespace.Name, "annotation-second-class")
+		reconcileNamespace(ctx, namespace.Name, nil)
+
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace.Name, Name: "first-config-annotation"}, &corev1.ConfigMap{})).To(MatchError(errors.IsNotFound, "IsNotFound"))
+		secondConfig := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace.Name, Name: "second-config-annotation"}, secondConfig)).To(Succeed())
+		Expect(secondConfig.Data).To(HaveKeyWithValue("class", "second"))
+	})
+
 	It("skips namespaces that are terminating", func() {
 		deletionTime := metav1.Now()
 		namespace := &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "nsclass-terminating",
-				Labels: map[string]string{
-					namespaceClassNamesLabel: "terminating-class",
+				Annotations: map[string]string{
+					namespaceClassNamesAnnotation: "terminating-class",
 				},
 				DeletionTimestamp: &deletionTime,
 				Finalizers:        []string{"test.example.com/finalizer"},
@@ -271,11 +348,15 @@ var _ = Describe("Namespace Controller", func() {
 })
 
 func createNamespace(ctx context.Context, name, classNames string) *corev1.Namespace {
+	return createNamespaceWithClassAnnotation(ctx, name, classNames)
+}
+
+func createNamespaceWithClassAnnotation(ctx context.Context, name, classNames string) *corev1.Namespace {
 	namespace := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
-			Labels: map[string]string{
-				namespaceClassNamesLabel: classNames,
+			Annotations: map[string]string{
+				namespaceClassNamesAnnotation: classNames,
 			},
 		},
 	}
@@ -286,10 +367,13 @@ func createNamespace(ctx context.Context, name, classNames string) *corev1.Names
 	return namespace
 }
 
-func updateNamespaceClassLabel(ctx context.Context, namespaceName, classNames string) {
+func updateNamespaceClassAnnotation(ctx context.Context, namespaceName, classNames string) {
 	namespace := &corev1.Namespace{}
 	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceName}, namespace)).To(Succeed())
-	namespace.Labels[namespaceClassNamesLabel] = classNames
+	if namespace.Annotations == nil {
+		namespace.Annotations = make(map[string]string)
+	}
+	namespace.Annotations[namespaceClassNamesAnnotation] = classNames
 	Expect(k8sClient.Update(ctx, namespace)).To(Succeed())
 }
 
