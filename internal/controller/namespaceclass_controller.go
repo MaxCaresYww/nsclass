@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -127,12 +128,18 @@ func (r *NamespaceClassReconciler) reconcileDelete(ctx context.Context, namespac
 
 func (r *NamespaceClassReconciler) namespaceNamesForClass(ctx context.Context, className string) ([]string, error) {
 	namespaceList := &corev1.NamespaceList{}
-	if err := r.List(ctx, namespaceList, client.MatchingLabels{namespaceClassNamesLabel: className}); err != nil {
+	if err := r.List(ctx, namespaceList); err != nil {
 		return nil, err
 	}
 	namespaceNames := make([]string, 0, len(namespaceList.Items))
 	for _, namespace := range namespaceList.Items {
-		namespaceNames = append(namespaceNames, namespace.Name)
+		classNames, err := namespaceClassNamesForNamespace(&namespace)
+		if err != nil {
+			continue
+		}
+		if slices.Contains(classNames, className) {
+			namespaceNames = append(namespaceNames, namespace.Name)
+		}
 	}
 	sort.Strings(namespaceNames)
 	return namespaceNames, nil
