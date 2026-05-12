@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,6 +50,8 @@ const (
 	templateIDAnnotation = "namespaceclass.akuity.io/template-id"
 
 	fieldManager = "namespaceclass-controller"
+
+	managedResourceSyncPeriod = 5 * time.Minute
 )
 
 // NamespaceReconciler reconciles resources derived from NamespaceClass membership labels.
@@ -130,7 +133,13 @@ func (r *NamespaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 
-	return ctrl.Result{}, r.deleteStaleObjects(ctx, namespace, existingObjects, desiredByIdentity, validClasses)
+	if err := r.deleteStaleObjects(ctx, namespace, existingObjects, desiredByIdentity, validClasses); err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(desiredResources) == 0 {
+		return ctrl.Result{}, nil
+	}
+	return ctrl.Result{RequeueAfter: managedResourceSyncPeriod}, nil
 }
 
 func parseNamespaceClassNames(value string) ([]string, error) {
