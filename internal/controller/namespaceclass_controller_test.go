@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -37,6 +38,19 @@ import (
 var _ = Describe("NamespaceClass Controller", func() {
 	ctx := context.Background()
 
+	It("adds the finalizer before updating status", func() {
+		namespaceClass := createNamespaceClass(ctx, "finalizer-first-class", configMapTemplate("finalizer-first-config", "state", "managed"))
+
+		result := reconcileNamespaceClassResult(ctx, namespaceClass.Name)
+
+		Expect(result).To(Equal(reconcile.Result{}))
+		reconciled := &akuityiov1alpha1.NamespaceClass{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, reconciled)).To(Succeed())
+		Expect(reconciled.Finalizers).To(ContainElement(namespaceClassFinalizer))
+		Expect(reconciled.Status.ObservedGeneration).To(BeZero())
+		Expect(reconciled.Status.Conditions).To(BeEmpty())
+	})
+
 	It("marks the class Ready when all templates are valid namespaced resources", func() {
 		namespaceClass := createNamespaceClass(ctx, "valid-class", runtime.RawExtension{
 			Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"example"},"data":{"key":"value"}}`),
@@ -49,6 +63,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 		Expect(ready).NotTo(BeNil())
 		Expect(ready.Status).To(Equal(metav1.ConditionTrue))
 		Expect(ready.Reason).To(Equal("TemplatesValid"))
+		Expect(reconciled.Finalizers).To(ContainElement(namespaceClassFinalizer))
 	})
 
 	It("marks the class not Ready when a template is missing metadata.name", func() {
@@ -80,6 +95,39 @@ var _ = Describe("NamespaceClass Controller", func() {
 		Expect(ready.Reason).To(Equal("UnsupportedClusterScopedResource"))
 		Expect(ready.Message).To(ContainSubstring("cluster-scoped"))
 	})
+
+	It("blocks deletion while namespaces still reference the class", func() {
+		namespaceClass := createNamespaceClass(ctx, "delete-blocked-class", configMapTemplate("delete-blocked-config", "state", "managed"))
+		reconcileNamespaceClass(ctx, namespaceClass.Name)
+		namespace := createNamespace(ctx, "nsclass-delete-blocked", namespaceClass.Name)
+		otherNamespace := createNamespace(ctx, "nsclass-delete-blocked-alt", namespaceClass.Name)
+
+		reconciled := &akuityiov1alpha1.NamespaceClass{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, reconciled)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, reconciled)).To(Succeed())
+
+		result := reconcileNamespaceClassResult(ctx, namespaceClass.Name)
+
+		Expect(result.RequeueAfter).To(Equal(deletionBlockedRequeue))
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, reconciled)).To(Succeed())
+		Expect(reconciled.Finalizers).To(ContainElement(namespaceClassFinalizer))
+		ready := apimeta.FindStatusCondition(reconciled.Status.Conditions, akuityiov1alpha1.NamespaceClassReadyCondition)
+		Expect(ready).NotTo(BeNil())
+		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+		Expect(ready.Reason).To(Equal("NamespacesStillUseClass"))
+		Expect(ready.Message).To(Equal("Namespaces still reference this NamespaceClass: nsclass-delete-blocked, nsclass-delete-blocked-alt"))
+
+		updateNamespaceClassLabel(ctx, namespace.Name, "")
+		updateNamespaceClassLabel(ctx, otherNamespace.Name, "")
+
+		result = reconcileNamespaceClassResult(ctx, namespaceClass.Name)
+
+		Expect(result).To(Equal(reconcile.Result{}))
+		Eventually(func() bool {
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, &akuityiov1alpha1.NamespaceClass{})
+			return apierrors.IsNotFound(err)
+		}).Should(BeTrue())
+	})
 })
 
 func createNamespaceClass(ctx context.Context, name string, resources ...runtime.RawExtension) *akuityiov1alpha1.NamespaceClass {
@@ -97,20 +145,26 @@ func createNamespaceClass(ctx context.Context, name string, resources ...runtime
 }
 
 func reconcileNamespaceClass(ctx context.Context, name string) *akuityiov1alpha1.NamespaceClass {
+	reconcileNamespaceClassResult(ctx, name)
+	reconcileNamespaceClassResult(ctx, name)
+
+	namespaceClass := &akuityiov1alpha1.NamespaceClass{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, namespaceClass)).To(Succeed())
+	return namespaceClass
+}
+
+func reconcileNamespaceClassResult(ctx context.Context, name string) reconcile.Result {
 	controllerReconciler := &NamespaceClassReconciler{
 		Client:     k8sClient,
 		Scheme:     k8sClient.Scheme(),
 		RESTMapper: newTestRESTMapper(),
 	}
 
-	_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+	result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name},
 	})
 	Expect(err).NotTo(HaveOccurred())
-
-	namespaceClass := &akuityiov1alpha1.NamespaceClass{}
-	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, namespaceClass)).To(Succeed())
-	return namespaceClass
+	return result
 }
 
 func newTestRESTMapper() apimeta.RESTMapper {
