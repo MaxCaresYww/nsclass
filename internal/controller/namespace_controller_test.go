@@ -43,8 +43,9 @@ var _ = Describe("Namespace Controller", func() {
 		namespaceClass := createNamespaceClass(ctx, "public-network", configMapTemplate("namespaceclass-sample", "example", "managed"))
 		reconcileNamespaceClass(ctx, namespaceClass.Name)
 
-		reconcileNamespace(ctx, namespace.Name, nil)
+		result := reconcileNamespaceController(ctx, namespace.Name, nil)
 
+		Expect(result).To(Equal(reconcile.Result{RequeueAfter: managedResourceSyncPeriod}))
 		configMap := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: namespace.Name, Name: "namespaceclass-sample"}, configMap)).To(Succeed())
 		Expect(configMap.Data).To(HaveKeyWithValue("example", "managed"))
@@ -319,6 +320,17 @@ func reconcileNamespace(ctx context.Context, name string, recorder events.EventR
 }
 
 func reconcileNamespaceResult(ctx context.Context, name string, recorder events.EventRecorder) error {
+	_, err := reconcileNamespaceControllerResult(ctx, name, recorder)
+	return err
+}
+
+func reconcileNamespaceController(ctx context.Context, name string, recorder events.EventRecorder) reconcile.Result {
+	result, err := reconcileNamespaceControllerResult(ctx, name, recorder)
+	Expect(err).NotTo(HaveOccurred())
+	return result
+}
+
+func reconcileNamespaceControllerResult(ctx context.Context, name string, recorder events.EventRecorder) (reconcile.Result, error) {
 	controllerReconciler := &NamespaceReconciler{
 		Client:     k8sClient,
 		Scheme:     k8sClient.Scheme(),
@@ -326,10 +338,10 @@ func reconcileNamespaceResult(ctx context.Context, name string, recorder events.
 		Recorder:   recorder,
 	}
 
-	_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+	result, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: name},
 	})
-	return err
+	return result, err
 }
 
 func configMapTemplate(name string, key string, value string) runtime.RawExtension {
