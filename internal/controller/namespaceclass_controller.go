@@ -20,7 +20,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -29,8 +33,14 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	akuityiov1alpha1 "github.com/maxcaresyww/nsclass/api/v1alpha1"
+)
+
+const (
+	namespaceClassFinalizer = "namespaceclass.akuity.io/finalizer"
+	deletionBlockedRequeue  = 30 * time.Second
 )
 
 // NamespaceClassReconciler reconciles a NamespaceClass object
@@ -48,11 +58,25 @@ type namespaceClassValidationError struct {
 // +kubebuilder:rbac:groups=akuity.io,resources=namespaceclasses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=akuity.io,resources=namespaceclasses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=akuity.io,resources=namespaceclasses/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=list
 
 func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	namespaceClass := &akuityiov1alpha1.NamespaceClass{}
 	if err := r.Get(ctx, req.NamespacedName, namespaceClass); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if !namespaceClass.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, namespaceClass)
+	}
+
+	if !controllerutil.ContainsFinalizer(namespaceClass, namespaceClassFinalizer) {
+		original := namespaceClass.DeepCopy()
+		controllerutil.AddFinalizer(namespaceClass, namespaceClassFinalizer)
+		if err := r.Patch(ctx, namespaceClass, client.MergeFrom(original)); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	originalStatus := namespaceClass.Status.DeepCopy()
@@ -79,6 +103,58 @@ func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
+}
+
+func (r *NamespaceClassReconciler) reconcileDelete(ctx context.Context, namespaceClass *akuityiov1alpha1.NamespaceClass) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(namespaceClass, namespaceClassFinalizer) {
+		return ctrl.Result{}, nil
+	}
+
+	namespaceNames, err := r.namespaceNamesForClass(ctx, namespaceClass.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if len(namespaceNames) > 0 {
+		return ctrl.Result{RequeueAfter: deletionBlockedRequeue}, r.setDeleteBlockedStatus(ctx, namespaceClass, namespaceNames)
+	}
+
+	controllerutil.RemoveFinalizer(namespaceClass, namespaceClassFinalizer)
+	if err := r.Update(ctx, namespaceClass); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
+}
+
+func (r *NamespaceClassReconciler) namespaceNamesForClass(ctx context.Context, className string) ([]string, error) {
+	namespaceList := &corev1.NamespaceList{}
+	if err := r.List(ctx, namespaceList, client.MatchingLabels{namespaceClassNamesLabel: className}); err != nil {
+		return nil, err
+	}
+	namespaceNames := make([]string, 0, len(namespaceList.Items))
+	for _, namespace := range namespaceList.Items {
+		namespaceNames = append(namespaceNames, namespace.Name)
+	}
+	sort.Strings(namespaceNames)
+	return namespaceNames, nil
+}
+
+func (r *NamespaceClassReconciler) setDeleteBlockedStatus(ctx context.Context, namespaceClass *akuityiov1alpha1.NamespaceClass, namespaceNames []string) error {
+	originalStatus := namespaceClass.Status.DeepCopy()
+	namespaceClass.Status.ObservedGeneration = namespaceClass.Generation
+	apimeta.SetStatusCondition(&namespaceClass.Status.Conditions, metav1.Condition{
+		Type:               akuityiov1alpha1.NamespaceClassReadyCondition,
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: namespaceClass.Generation,
+		Reason:             "NamespacesStillUseClass",
+		Message:            fmt.Sprintf("Namespaces still reference this NamespaceClass: %s", strings.Join(namespaceNames, ", ")),
+	})
+	if equality.Semantic.DeepEqual(originalStatus, &namespaceClass.Status) {
+		return nil
+	}
+	if err := r.Status().Update(ctx, namespaceClass); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 func (r *NamespaceClassReconciler) validateNamespaceClass(namespaceClass *akuityiov1alpha1.NamespaceClass) error {
