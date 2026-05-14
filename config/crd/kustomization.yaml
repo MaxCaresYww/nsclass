@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/akuity.io_namespaceclasses.yaml
+- bases/akuity.io_namespaceclassbindings.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

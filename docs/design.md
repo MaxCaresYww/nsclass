@@ -2,6 +2,19 @@
 
 This document collects draft architecture decisions for NamespaceClass.
 
+## Controller Responsibilities
+
+The NamespaceClass controller owns the lifecycle of class definitions. It
+validates resource templates, reports class readiness, and blocks deletion while
+a class is still referenced by the default NamespaceClassBinding. It does not
+apply class resources into namespaces.
+
+The NamespaceClassBinding controller owns class assignment and resource
+reconciliation. It reads `NamespaceClassBinding/default`, resolves each
+namespace-to-class mapping, applies the selected class resources into target
+namespaces, records the applied resource inventory, and removes resources that
+are no longer desired.
+
 ## Architecture Decisions
 
 ### Which `Group` Should Be Used for the NamespaceClass CRD?
@@ -42,18 +55,30 @@ Recorded here: https://github.com/MaxCaresYww/nsclass/issues/3
 
 Allow one namespace to compose multiple NamespaceClasses.
 
-Membership is represented as a comma-separated annotation:
+Membership is represented by the cluster-scoped singleton
+`NamespaceClassBinding/default`:
 
 ```yaml
-namespaceclass.akuity.io/names: public-network,registry-push
+apiVersion: akuity.io/v1alpha1
+kind: NamespaceClassBinding
+metadata:
+  name: default
+spec:
+  mappings:
+    - namespace: web-portal
+      classNames:
+        - public-network
+        - registry-push
 ```
 
-Kubernetes labels are designed for simple identifying metadata and selector
-queries, not structured lists. Using an annotation keeps the multi-class value
-as controller configuration.
+Using a binding keeps class membership out of Namespace labels/annotations and
+gives platform admins one assignment table to maintain.
 
-The controller treats the selected classes as the source of all managed
-templates for the namespace. If membership changes, resources from removed
-classes should be removed and resources from newly added classes should be
-applied.
+The binding controller treats each mapping's selected classes as the source of
+all managed templates for the mapped namespace. If membership changes, resources
+from removed classes should be removed and resources from newly added classes
+should be applied. If a namespace mapping is removed, managed resources for that
+namespace should be removed.
+
+Refer to https://github.com/MaxCaresYww/nsclass/issues/2 for detail.
 

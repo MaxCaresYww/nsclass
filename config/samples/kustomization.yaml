@@ -2,4 +2,5 @@
 resources:
 - nscls_public_net.yaml
 - nscls_private_net.yaml
+- v1alpha1_namespaceclassbinding.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

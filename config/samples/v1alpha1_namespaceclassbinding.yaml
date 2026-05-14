@@ -1,0 +1,13 @@
+apiVersion: akuity.io/v1alpha1
+kind: NamespaceClassBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: nsclass
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+spec:
+  mappings:
+  - namespace: default
+    classNames:
+    - public-network
+    - private-network
