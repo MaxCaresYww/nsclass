@@ -96,11 +96,13 @@ var _ = Describe("NamespaceClass Controller", func() {
 		Expect(ready.Message).To(ContainSubstring("cluster-scoped"))
 	})
 
-	It("blocks deletion while namespaces still reference the class through the annotation", func() {
+	It("blocks deletion while NamespaceClassBindings still reference the class", func() {
 		namespaceClass := createNamespaceClass(ctx, "delete-blocked-class", configMapTemplate("delete-blocked-config", "state", "managed"))
 		reconcileNamespaceClass(ctx, namespaceClass.Name)
-		namespace := createNamespace(ctx, "nsclass-delete-blocked", namespaceClass.Name)
-		otherNamespace := createNamespace(ctx, "nsclass-delete-blocked-alt", namespaceClass.Name)
+		namespace := createTestNamespace(ctx, "nsclass-delete-blocked")
+		otherNamespace := createTestNamespace(ctx, "nsclass-delete-blocked-alt")
+		createNamespaceClassBinding(ctx, namespace.Name, namespaceClass.Name)
+		createNamespaceClassBinding(ctx, otherNamespace.Name, namespaceClass.Name)
 
 		reconciled := &akuityiov1alpha1.NamespaceClass{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, reconciled)).To(Succeed())
@@ -114,11 +116,11 @@ var _ = Describe("NamespaceClass Controller", func() {
 		ready := apimeta.FindStatusCondition(reconciled.Status.Conditions, akuityiov1alpha1.NamespaceClassReadyCondition)
 		Expect(ready).NotTo(BeNil())
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
-		Expect(ready.Reason).To(Equal("NamespacesStillUseClass"))
-		Expect(ready.Message).To(Equal("Namespaces still reference this NamespaceClass: nsclass-delete-blocked, nsclass-delete-blocked-alt"))
+		Expect(ready.Reason).To(Equal("NamespaceClassBindingsStillUseClass"))
+		Expect(ready.Message).To(Equal("NamespaceClassBindings still reference this NamespaceClass: default/nsclass-delete-blocked, default/nsclass-delete-blocked-alt"))
 
-		updateNamespaceClassAnnotation(ctx, namespace.Name, "")
-		updateNamespaceClassAnnotation(ctx, otherNamespace.Name, "")
+		updateNamespaceClassBindingClassNames(ctx, namespace.Name, "default", "other-class")
+		updateNamespaceClassBindingClassNames(ctx, otherNamespace.Name, "default", "other-class")
 
 		result = reconcileNamespaceClassResult(ctx, namespaceClass.Name)
 
@@ -129,10 +131,11 @@ var _ = Describe("NamespaceClass Controller", func() {
 		}).Should(BeTrue())
 	})
 
-	It("blocks deletion while namespaces still reference the class through the annotation", func() {
-		namespaceClass := createNamespaceClass(ctx, "delete-blocked-annotation-class", configMapTemplate("delete-blocked-annotation-config", "state", "managed"))
+	It("blocks deletion while a NamespaceClassBinding composes the class with other classes", func() {
+		namespaceClass := createNamespaceClass(ctx, "delete-blocked-composed-class", configMapTemplate("delete-blocked-composed-config", "state", "managed"))
 		reconcileNamespaceClass(ctx, namespaceClass.Name)
-		createNamespaceWithClassAnnotation(ctx, "nsclass-delete-blocked-annotation", namespaceClass.Name+",other-class")
+		namespace := createTestNamespace(ctx, "nsclass-delete-blocked-composed")
+		createNamespaceClassBinding(ctx, namespace.Name, namespaceClass.Name, "other-class")
 
 		reconciled := &akuityiov1alpha1.NamespaceClass{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespaceClass.Name}, reconciled)).To(Succeed())
@@ -146,10 +149,10 @@ var _ = Describe("NamespaceClass Controller", func() {
 		ready := apimeta.FindStatusCondition(reconciled.Status.Conditions, akuityiov1alpha1.NamespaceClassReadyCondition)
 		Expect(ready).NotTo(BeNil())
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
-		Expect(ready.Reason).To(Equal("NamespacesStillUseClass"))
-		Expect(ready.Message).To(Equal("Namespaces still reference this NamespaceClass: nsclass-delete-blocked-annotation"))
+		Expect(ready.Reason).To(Equal("NamespaceClassBindingsStillUseClass"))
+		Expect(ready.Message).To(Equal("NamespaceClassBindings still reference this NamespaceClass: default/nsclass-delete-blocked-composed"))
 
-		updateNamespaceClassAnnotation(ctx, "nsclass-delete-blocked-annotation", "other-class")
+		updateNamespaceClassBindingClassNames(ctx, namespace.Name, "default", "other-class")
 
 		result = reconcileNamespaceClassResult(ctx, namespaceClass.Name)
 

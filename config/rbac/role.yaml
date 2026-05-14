@@ -13,14 +13,6 @@ rules:
   - list
   - watch
 - apiGroups:
-  - ""
-  - events.k8s.io
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
-- apiGroups:
   - '*'
   resources:
   - '*'
@@ -35,6 +27,7 @@ rules:
 - apiGroups:
   - akuity.io
   resources:
+  - namespaceclassbindings
   - namespaceclasses
   verbs:
   - create
@@ -47,12 +40,14 @@ rules:
 - apiGroups:
   - akuity.io
   resources:
+  - namespaceclassbindings/finalizers
   - namespaceclasses/finalizers
   verbs:
   - update
 - apiGroups:
   - akuity.io
   resources:
+  - namespaceclassbindings/status
   - namespaceclasses/status
   verbs:
   - get

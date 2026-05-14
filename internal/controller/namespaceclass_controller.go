@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -59,7 +58,7 @@ type namespaceClassValidationError struct {
 // +kubebuilder:rbac:groups=akuity.io,resources=namespaceclasses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=akuity.io,resources=namespaceclasses/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=akuity.io,resources=namespaceclasses/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=namespaces,verbs=list
+// +kubebuilder:rbac:groups=akuity.io,resources=namespaceclassbindings,verbs=get
 
 func (r *NamespaceClassReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	namespaceClass := &akuityiov1alpha1.NamespaceClass{}
@@ -111,12 +110,12 @@ func (r *NamespaceClassReconciler) reconcileDelete(ctx context.Context, namespac
 		return ctrl.Result{}, nil
 	}
 
-	namespaceNames, err := r.namespaceNamesForClass(ctx, namespaceClass.Name)
+	bindingNames, err := r.bindingNamesForClass(ctx, namespaceClass.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if len(namespaceNames) > 0 {
-		return ctrl.Result{RequeueAfter: deletionBlockedRequeue}, r.setDeleteBlockedStatus(ctx, namespaceClass, namespaceNames)
+	if len(bindingNames) > 0 {
+		return ctrl.Result{RequeueAfter: deletionBlockedRequeue}, r.setDeleteBlockedStatus(ctx, namespaceClass, bindingNames)
 	}
 
 	controllerutil.RemoveFinalizer(namespaceClass, namespaceClassFinalizer)
@@ -126,34 +125,31 @@ func (r *NamespaceClassReconciler) reconcileDelete(ctx context.Context, namespac
 	return ctrl.Result{}, nil
 }
 
-func (r *NamespaceClassReconciler) namespaceNamesForClass(ctx context.Context, className string) ([]string, error) {
-	namespaceList := &corev1.NamespaceList{}
-	if err := r.List(ctx, namespaceList); err != nil {
-		return nil, err
+func (r *NamespaceClassReconciler) bindingNamesForClass(ctx context.Context, className string) ([]string, error) {
+	binding := &akuityiov1alpha1.NamespaceClassBinding{}
+	if err := r.Get(ctx, client.ObjectKey{Name: akuityiov1alpha1.NamespaceClassBindingDefaultName}, binding); err != nil {
+		return nil, client.IgnoreNotFound(err)
 	}
-	namespaceNames := make([]string, 0, len(namespaceList.Items))
-	for _, namespace := range namespaceList.Items {
-		classNames, err := namespaceClassNamesForNamespace(&namespace)
-		if err != nil {
-			continue
-		}
-		if slices.Contains(classNames, className) {
-			namespaceNames = append(namespaceNames, namespace.Name)
+	mappings := namespaceClassBindingMappings(binding.Spec.Mappings)
+	bindingNames := make([]string, 0, len(mappings))
+	for _, mapping := range mappings {
+		if slices.Contains(mapping.classNames, className) {
+			bindingNames = append(bindingNames, fmt.Sprintf("%s/%s", binding.Name, mapping.namespace))
 		}
 	}
-	sort.Strings(namespaceNames)
-	return namespaceNames, nil
+	sort.Strings(bindingNames)
+	return bindingNames, nil
 }
 
-func (r *NamespaceClassReconciler) setDeleteBlockedStatus(ctx context.Context, namespaceClass *akuityiov1alpha1.NamespaceClass, namespaceNames []string) error {
+func (r *NamespaceClassReconciler) setDeleteBlockedStatus(ctx context.Context, namespaceClass *akuityiov1alpha1.NamespaceClass, bindingNames []string) error {
 	originalStatus := namespaceClass.Status.DeepCopy()
 	namespaceClass.Status.ObservedGeneration = namespaceClass.Generation
 	apimeta.SetStatusCondition(&namespaceClass.Status.Conditions, metav1.Condition{
 		Type:               akuityiov1alpha1.NamespaceClassReadyCondition,
 		Status:             metav1.ConditionFalse,
 		ObservedGeneration: namespaceClass.Generation,
-		Reason:             "NamespacesStillUseClass",
-		Message:            fmt.Sprintf("Namespaces still reference this NamespaceClass: %s", strings.Join(namespaceNames, ", ")),
+		Reason:             "NamespaceClassBindingsStillUseClass",
+		Message:            fmt.Sprintf("NamespaceClassBindings still reference this NamespaceClass: %s", strings.Join(bindingNames, ", ")),
 	})
 	if equality.Semantic.DeepEqual(originalStatus, &namespaceClass.Status) {
 		return nil

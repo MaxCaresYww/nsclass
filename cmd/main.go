@@ -27,7 +27,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -180,26 +179,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(restConfig)
-	if err != nil {
-		setupLog.Error(err, "Failed to create discovery client")
-		os.Exit(1)
-	}
-
-	if err := (&controller.NamespaceReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Discovery: discoveryClient,
-		Recorder:  mgr.GetEventRecorder("namespace-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "namespace")
-		os.Exit(1)
-	}
 	if err := (&controller.NamespaceClassReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "namespaceclass")
+		os.Exit(1)
+	}
+	if err := (&controller.NamespaceClassBindingReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "namespaceclassbinding")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
