@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -29,7 +28,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,11 +46,6 @@ type NamespaceClassReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
 	RESTMapper apimeta.RESTMapper
-}
-
-type namespaceClassValidationError struct {
-	reason  string
-	message string
 }
 
 // +kubebuilder:rbac:groups=akuity.io,resources=namespaceclasses,verbs=get;list;watch;create;update;patch;delete
@@ -134,7 +127,7 @@ func (r *NamespaceClassReconciler) bindingNamesForClass(ctx context.Context, cla
 	bindingNames := make([]string, 0, len(mappings))
 	for _, mapping := range mappings {
 		if slices.Contains(mapping.classNames, className) {
-			bindingNames = append(bindingNames, fmt.Sprintf("%s/%s", binding.Name, mapping.namespace))
+			bindingNames = append(bindingNames, mapping.namespace)
 		}
 	}
 	sort.Strings(bindingNames)
@@ -149,7 +142,8 @@ func (r *NamespaceClassReconciler) setDeleteBlockedStatus(ctx context.Context, n
 		Status:             metav1.ConditionFalse,
 		ObservedGeneration: namespaceClass.Generation,
 		Reason:             "NamespaceClassBindingsStillUseClass",
-		Message:            fmt.Sprintf("NamespaceClassBindings still reference this NamespaceClass: %s", strings.Join(bindingNames, ", ")),
+		Message: fmt.Sprintf("Namespaces %s in NamespaceClassBindings %s still reference this NamespaceClass",
+			strings.Join(bindingNames, ", "), akuityiov1alpha1.NamespaceClassBindingDefaultName),
 	})
 	if equality.Semantic.DeepEqual(originalStatus, &namespaceClass.Status) {
 		return nil
@@ -161,10 +155,6 @@ func (r *NamespaceClassReconciler) setDeleteBlockedStatus(ctx context.Context, n
 }
 
 func (r *NamespaceClassReconciler) validateNamespaceClass(namespaceClass *akuityiov1alpha1.NamespaceClass) error {
-	if r.RESTMapper == nil {
-		return newValidationError("ValidationFailed", "REST mapper is not configured")
-	}
-
 	for i, resource := range namespaceClass.Spec.Resources {
 		if err := r.validateResourceTemplate(i, resource); err != nil {
 			return err
@@ -174,67 +164,8 @@ func (r *NamespaceClassReconciler) validateNamespaceClass(namespaceClass *akuity
 }
 
 func (r *NamespaceClassReconciler) validateResourceTemplate(index int, resource runtime.RawExtension) error {
-	obj, err := decodeResourceTemplate(resource)
-	if err != nil {
-		return newValidationError("TemplateInvalid", "resource template %d is invalid: %v", index, err)
-	}
-
-	gvk := obj.GroupVersionKind()
-	if gvk.GroupVersion().Empty() {
-		return newValidationError("TemplateInvalid", "resource template %d must include apiVersion", index)
-	}
-	if gvk.Kind == "" {
-		return newValidationError("TemplateInvalid", "resource template %d must include kind", index)
-	}
-	if obj.GetName() == "" {
-		return newValidationError("TemplateInvalid", "resource template %d must include metadata.name", index)
-	}
-
-	mapping, err := r.RESTMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return newValidationError("UnsupportedResource", "resource template %d uses unsupported kind %s: %v", index, gvk.String(), err)
-	}
-	if mapping.Scope.Name() == apimeta.RESTScopeNameRoot {
-		return newValidationError("UnsupportedClusterScopedResource", "resource template %d uses cluster-scoped kind %s, which is not supported", index, gvk.String())
-	}
-	return nil
-}
-
-func decodeResourceTemplate(resource runtime.RawExtension) (*unstructured.Unstructured, error) {
-	obj := &unstructured.Unstructured{}
-	switch {
-	case len(resource.Raw) > 0:
-		if err := json.Unmarshal(resource.Raw, &obj.Object); err != nil {
-			return nil, err
-		}
-	case resource.Object != nil:
-		content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(resource.Object)
-		if err != nil {
-			return nil, err
-		}
-		obj.Object = content
-	default:
-		return nil, fmt.Errorf("template is empty")
-	}
-	return obj, nil
-}
-
-func newValidationError(reason, format string, args ...any) *namespaceClassValidationError {
-	return &namespaceClassValidationError{
-		reason:  reason,
-		message: fmt.Sprintf(format, args...),
-	}
-}
-
-func (e *namespaceClassValidationError) Error() string {
-	return e.message
-}
-
-func validationReason(err error) string {
-	if validationErr, ok := err.(*namespaceClassValidationError); ok {
-		return validationErr.reason
-	}
-	return "ValidationFailed"
+	_, err := decodeAndValidateResourceTemplate(r.RESTMapper, index, resource, "")
+	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.

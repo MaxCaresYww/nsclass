@@ -117,7 +117,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 		Expect(ready).NotTo(BeNil())
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 		Expect(ready.Reason).To(Equal("NamespaceClassBindingsStillUseClass"))
-		Expect(ready.Message).To(Equal("NamespaceClassBindings still reference this NamespaceClass: default/nsclass-delete-blocked, default/nsclass-delete-blocked-alt"))
+		Expect(ready.Message).To(Equal("Namespaces nsclass-delete-blocked, nsclass-delete-blocked-alt in NamespaceClassBindings default still reference this NamespaceClass"))
 
 		updateNamespaceClassBindingClassNames(ctx, namespace.Name, "default", "other-class")
 		updateNamespaceClassBindingClassNames(ctx, otherNamespace.Name, "default", "other-class")
@@ -150,7 +150,7 @@ var _ = Describe("NamespaceClass Controller", func() {
 		Expect(ready).NotTo(BeNil())
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 		Expect(ready.Reason).To(Equal("NamespaceClassBindingsStillUseClass"))
-		Expect(ready.Message).To(Equal("NamespaceClassBindings still reference this NamespaceClass: default/nsclass-delete-blocked-composed"))
+		Expect(ready.Message).To(Equal("Namespaces nsclass-delete-blocked-composed in NamespaceClassBindings default still reference this NamespaceClass"))
 
 		updateNamespaceClassBindingClassNames(ctx, namespace.Name, "default", "other-class")
 
