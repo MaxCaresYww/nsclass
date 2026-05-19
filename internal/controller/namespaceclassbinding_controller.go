@@ -39,6 +39,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	akuityiov1alpha1 "github.com/maxcaresyww/nsclass/api/v1alpha1"
@@ -340,28 +341,9 @@ func (r *NamespaceClassBindingReconciler) desiredResourcesForClass(namespaceName
 }
 
 func (r *NamespaceClassBindingReconciler) prepareDesiredObject(namespaceName, className string, index int, resource runtime.RawExtension) (*unstructured.Unstructured, error) {
-	obj, err := decodeResourceTemplate(resource)
+	obj, err := decodeAndValidateResourceTemplate(r.RESTMapper, index, resource, className)
 	if err != nil {
-		return nil, newValidationError("TemplateInvalid", "resource template %d in NamespaceClass %q is invalid: %v", index, className, err)
-	}
-
-	gvk := obj.GroupVersionKind()
-	if gvk.GroupVersion().Empty() {
-		return nil, newValidationError("TemplateInvalid", "resource template %d in NamespaceClass %q must include apiVersion", index, className)
-	}
-	if gvk.Kind == "" {
-		return nil, newValidationError("TemplateInvalid", "resource template %d in NamespaceClass %q must include kind", index, className)
-	}
-	if obj.GetName() == "" {
-		return nil, newValidationError("TemplateInvalid", "resource template %d in NamespaceClass %q must include metadata.name", index, className)
-	}
-
-	mapping, err := r.RESTMapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-	if err != nil {
-		return nil, newValidationError("UnsupportedResource", "resource template %d in NamespaceClass %q uses unsupported kind %s: %v", index, className, gvk.String(), err)
-	}
-	if mapping.Scope.Name() == apimeta.RESTScopeNameRoot {
-		return nil, newValidationError("UnsupportedClusterScopedResource", "resource template %d in NamespaceClass %q uses cluster-scoped kind %s, which is not supported", index, className, gvk.String())
+		return nil, err
 	}
 
 	obj.SetNamespace(namespaceName)
@@ -523,19 +505,24 @@ func nextAppliedResourceInventory(
 		if _, ok := nextInventory[identity]; ok {
 			continue
 		}
+		// namespace get deleted by someone
 		if _, ok := missingNamespaces[identity.namespace]; ok {
 			continue
 		}
 		mapping, ok := mappingsByNamespace[identity.namespace]
+		// mapping is deleted
 		if !ok {
 			continue
 		}
+		// className removed from the mapping
 		if !slices.Contains(mapping.classNames, resource.className) {
 			continue
 		}
+		// className is valid
 		if _, ok := validClassesByNamespace[identity.namespace][resource.className]; ok {
 			continue
 		}
+		// class not ready, still keep the inventory
 		nextInventory[identity] = resource
 	}
 	return nextInventory
@@ -624,6 +611,7 @@ func (r *NamespaceClassBindingReconciler) setBindingStatus(ctx context.Context, 
 	return nil
 }
 
+// mapNamespaceClassToBindings filter those namespaceClass exist in namespaceClassBinding
 func (r *NamespaceClassBindingReconciler) mapNamespaceClassToBindings(ctx context.Context, obj client.Object) []reconcile.Request {
 	binding := &akuityiov1alpha1.NamespaceClassBinding{}
 	if err := r.Get(ctx, client.ObjectKey{Name: akuityiov1alpha1.NamespaceClassBindingDefaultName}, binding); err != nil {
@@ -641,6 +629,7 @@ func (r *NamespaceClassBindingReconciler) mapNamespaceClassToBindings(ctx contex
 	return nil
 }
 
+// mapNamespaceToBinding filter namespace exist in namespaceClassBinding
 func (r *NamespaceClassBindingReconciler) mapNamespaceToBinding(ctx context.Context, obj client.Object) []reconcile.Request {
 	binding := &akuityiov1alpha1.NamespaceClassBinding{}
 	if err := r.Get(ctx, client.ObjectKey{Name: akuityiov1alpha1.NamespaceClassBindingDefaultName}, binding); err != nil {
@@ -657,24 +646,6 @@ func (r *NamespaceClassBindingReconciler) mapNamespaceToBinding(ctx context.Cont
 	return nil
 }
 
-type namespaceCreateOnlyPredicate struct{}
-
-func (namespaceCreateOnlyPredicate) Create(event.CreateEvent) bool {
-	return true
-}
-
-func (namespaceCreateOnlyPredicate) Update(event.UpdateEvent) bool {
-	return false
-}
-
-func (namespaceCreateOnlyPredicate) Delete(event.DeleteEvent) bool {
-	return false
-}
-
-func (namespaceCreateOnlyPredicate) Generic(event.GenericEvent) bool {
-	return false
-}
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *NamespaceClassBindingReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.RESTMapper == nil {
@@ -687,7 +658,20 @@ func (r *NamespaceClassBindingReconciler) SetupWithManager(mgr ctrl.Manager) err
 		Watches(
 			&corev1.Namespace{},
 			handler.EnqueueRequestsFromMapFunc(r.mapNamespaceToBinding),
-			builder.WithPredicates(namespaceCreateOnlyPredicate{}),
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc: func(event.CreateEvent) bool {
+					return true
+				},
+				UpdateFunc: func(event.UpdateEvent) bool {
+					return false
+				},
+				DeleteFunc: func(event.DeleteEvent) bool {
+					return false
+				},
+				GenericFunc: func(event.GenericEvent) bool {
+					return false
+				},
+			}),
 		).
 		Named("namespaceclassbinding").
 		Complete(r)

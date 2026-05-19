@@ -4,16 +4,36 @@ This document collects draft architecture decisions for NamespaceClass.
 
 ## Controller Responsibilities
 
-The NamespaceClass controller owns the lifecycle of class definitions. It
-validates resource templates, reports class readiness, and blocks deletion while
+The NamespaceClass controller owns the lifecycle of NamespaceClass definitions.
+It validates resource templates, reports class readiness, and blocks deletion while
 a class is still referenced by the default NamespaceClassBinding. It does not
 apply class resources into namespaces.
+
+It watches NamespaceClass custom resource events:
+- Create: validate resources in spec.
+- Update: validate resources in spec.
+- Delete: Check if there is NamespaceClassBinding still refers to this NamespaceClass
+and block deletion if yes.
 
 The NamespaceClassBinding controller owns class assignment and resource
 reconciliation. It reads `NamespaceClassBinding/default`, resolves each
 namespace-to-class mapping, applies the selected class resources into target
 namespaces, records the applied resource inventory, and removes resources that
 are no longer desired.
+
+It watches following events:
+
+**1. Create, Update, Delete event from NamespaceClassBinding.**
+
+**2. Create, Update, Delete (not needed) event from NamespaceClass.**
+
+Support sync resource changes from NamespaceClass to the system.
+
+**3. Create event from Namespace**
+
+Support specify mapping from namespace to namespaceClass in namespaceClassBinding
+when namespace is not yet exist. Then after namespace is created, the resources
+specified in associated namespaceClass will get created automatically.
 
 ## Architecture Decisions
 
